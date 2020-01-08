@@ -1,0 +1,649 @@
+/* bst.c 
+ * Jonathan Pugliese
+ * jpuglie
+ * ECE 2230 Spring 2019
+ * MP 5
+ *
+ * Implementation of tree interface for basic binary tree
+ * 
+ * Assumptions: Height of leaves begin at 1, height of extended (NULL) are 0 
+ * Bugs: None
+ * Notes: I implemented my own max function and did not realize until the end there was
+ * one built in, did not strike me as a needed fix to go back through and change.
+ */
+#include <stdlib.h>
+#include <stdio.h>
+#include <assert.h>
+#include <limits.h>
+
+#include "bst.h"
+
+#define MYMAX(a, b) (a > b ? a : b)
+// counters for statistics
+int CompCalls = 0;
+int NumRotations = 0;
+
+
+/* definitions for use in bst.c only */
+void ugly_print(bst_node_t *N, int level, int policy);
+int bst_debug_validate_rec(bst_node_t *N, int min, int max, int *count);
+int rec_height(bst_node_t *N);
+int children(bst_node_t *N);
+void pretty_print(bst_t *T);
+
+// Auxilary functions for bst
+bst_node_t *insertNode(bst_t *T,bst_node_t *N, bst_key_t key, data_t elem_ptr); // recursive function to be called for bst_insert 
+int getInternal(bst_node_t *N, int currentLvl);
+void freeNodes(bst_node_t *N);
+bst_node_t *findNode(bst_node_t *N, bst_key_t key);
+
+//AVL auxilary functions
+int height(bst_node_t *N); //gets height of node
+int max(int a, int b); //returns max between two nodes
+bst_node_t *rightRotate(bst_node_t *N); //rotates given node right
+bst_node_t *leftRotate(bst_node_t *N); //rotates given node left
+int checkBalance(bst_node_t *N);      //gets balance factor of given node
+bst_node_t *insertNode_AVL(bst_t *T,bst_node_t *N, bst_key_t key, data_t elem_ptr); 
+
+
+/* Finds the tree element with the matching key and returns the data that is
+ * stored in this node in the tree.
+ *
+ * T - tree to search in key - key to find inside T
+ *
+ * Uses auxilary recursive function findNode to move through the tree, as well as 
+ * count comparison calls until a key is found or we have reached a leaf
+ *
+ * RETURNS pointer to the data stored in the found node or NULL if no match is
+ * found
+ */
+bst_node_t *findNode(bst_node_t *N, bst_key_t key){
+	if(N == NULL){
+		return NULL;
+	}
+	
+	if(N->key == key){
+		CompCalls++;
+		return N;
+	}
+	else if(N->key < key){
+		CompCalls++;
+		CompCalls++;
+		N = findNode(N->right, key);	
+	}
+	else if(N->key > key){
+		//CompCalls++;
+		CompCalls++;
+		CompCalls++;
+		N = findNode(N->left, key);
+	}
+
+	return N;
+}
+data_t bst_access(bst_t *T, bst_key_t key)
+{
+    CompCalls = 0;
+    bst_node_t* found = NULL;
+    /* TODO complete */
+    if(T != NULL){
+	if(T->root != NULL){
+		found = findNode(T->root, key);	
+	}
+    }
+    
+    T->num_recent_key_comparisons = CompCalls;
+    if(found != NULL){
+	return found->data_ptr;
+    }
+    else{
+    	return NULL;
+    }
+}
+
+/* Creates the header block for the tree with the provided management policy,
+ * and initializes it with default 'blank' data.
+ *
+ * tree_policy - tree management policy to use either AVL or BST.
+ *
+ * RETURNS pointer to the newly created tree
+ */
+bst_t *bst_construct(int tree_policy)
+{
+    
+	bst_t *T;
+	T = (bst_t *) malloc(sizeof(bst_t));
+	T->root = NULL;
+	T->size = 0;
+	T->num_recent_rotations = 0;
+	T->policy = tree_policy;
+	T->num_recent_key_comparisons = 0;
+	
+    return T;
+}
+
+
+/* Free all items stored in the tree including the memory block with the data
+ * and the bst_node_t structure.  Also frees the header block.  
+ * uses auxilary freeNodes function to recursively move through tree freeing data
+ * T - tree to destroy
+ */
+
+void freeNodes(bst_node_t *N){
+	
+	if(N == NULL){
+		return;
+	}
+
+	freeNodes(N->left);
+	freeNodes(N->right);
+	free(N->data_ptr);
+	N->data_ptr = NULL;
+	free(N);
+	N = NULL;
+}
+void bst_destruct(bst_t *T)
+{
+    if(T != NULL){
+	if(T->root != NULL){
+		freeNodes(T->root);	//recursively remove nodes
+	}
+	
+	free(T);	// destroy tree
+	T = NULL; 
+    }
+        
+}
+
+/* Insert data_t into the tree with the associated key. Insertion MUST
+ * follow the tree's property (i.e., AVL or BST)
+ *
+ * T - tree to insert into
+ * key - search key to determine if key is in the tree
+ * elem_ptr - data to be stored at tree node indicated by key
+ * 
+ * uses insertNode as a recursive auxilary function that will find the proper
+ * placement of the key or update the data pointer if the key already exists
+ *
+ * RETURNS 0 if key is found and element is replaced, and 1 if key is not found
+ * and element is inserted
+ */
+bst_node_t *insertNode(bst_t *T,bst_node_t *N, bst_key_t key, data_t elem_ptr){
+
+//int newInsert = 0;
+	 if(N == NULL){
+                bst_node_t *node = (bst_node_t *)malloc(sizeof(bst_node_t));
+                node->data_ptr = elem_ptr;
+                node->key = key;
+                node->height = 1;
+                node->left = node->right = NULL;
+		T->size += 1;
+         	return node;
+        }
+
+        if(N->key == key){
+		CompCalls++;
+		free(N->data_ptr);
+                N->data_ptr = elem_ptr; //update elem_ptr
+        }
+        else if(N->key < key){
+                CompCalls += 2;
+                N->right =  insertNode(T,N->right, key, elem_ptr);
+
+        }
+        else if(N->key > key){
+                CompCalls += 2;
+                N->left = insertNode(T,N->left, key, elem_ptr);
+        }
+
+// Update heights
+	N->height = 1 + max(height(N->left),height(N->right));
+	
+return N;
+
+}
+int bst_insert(bst_t *T, bst_key_t key, data_t elem_ptr)
+{
+    CompCalls = 0;
+    NumRotations = 0;
+    int returnVal = -1;
+    int sizeBefore; 	// used to check if child was added
+    if (T->policy == AVL) {	    
+	returnVal = bst_avl_insert(T, key, elem_ptr);
+    }
+    else if(T->policy == BST){
+		sizeBefore = T->size;
+		T->root = insertNode(T,T->root, key, elem_ptr); //should I not set T->root to this?
+		
+		if(T->size != sizeBefore){
+			returnVal = 1;		//new child added
+		}
+		else{
+			returnVal = 0;
+		}
+	
+	
+    }
+
+        T->num_recent_key_comparisons = CompCalls;
+        T->num_recent_rotations = NumRotations;
+
+
+#ifdef VALIDATE
+        bst_debug_validate(T);
+#endif
+    return returnVal;
+}
+
+/* Below are several auxilary functions that are needed to properly create the AVL tree
+   height, and max are self explanatory. rightRotate and left Rotate will move the nodes
+   as needed and then properly adjust their sizes respectively. checkBalance computes the
+   balance factor of a given node, needed to determine the lean and if rotations are needed
+
+*/
+int height(bst_node_t *N){
+	if(N == NULL){
+		return 0;
+	}
+	else{
+		return N->height;
+	}
+}
+
+int max(int a, int b){
+	if(a > b){
+		return a;
+	}
+	else{
+		return b;
+	}
+}
+
+bst_node_t *rightRotate(bst_node_t *N){
+	
+	bst_node_t *M = N->left;
+	bst_node_t *O = M->right;
+
+	//rotation
+	M->right = N;
+	N->left = O;
+
+	//update height
+	N->height = max(height(N->left), height(N->right)) + 1;
+	M->height = max(height(M->left), height(M->right)) + 1;
+
+	return M;
+}
+
+bst_node_t *leftRotate(bst_node_t *N){
+
+        bst_node_t *M = N->right;
+        bst_node_t *O = M->left;
+
+        //rotation
+        M->left = N;
+        N->right = O;
+
+        //update height
+        N->height = max(height(N->left), height(N->right)) + 1;
+        M->height = max(height(M->left), height(M->right)) + 1;
+
+        return M;
+}
+
+int checkBalance(bst_node_t *N){
+	
+	if(N == NULL){
+		return 0;
+	}
+	
+	return height(N->left) - height(N->right);
+}
+
+/* Recursive auxilary function for AVL insertion. Begins with a normal BST insertion, then checks for
+   whether the node it is currently on is unbalanced, if so the proper rotation type is determined based
+   off of the balance factor.
+*/
+bst_node_t *insertNode_AVL(bst_t *T,bst_node_t *N, bst_key_t key, data_t elem_ptr){
+
+//int newInsert = 0;
+         if(N == NULL){
+                bst_node_t *node = (bst_node_t *)malloc(sizeof(bst_node_t));
+                node->data_ptr = elem_ptr;
+                node->key = key;
+		T->size += 1;
+                node->height = 1;
+                node->left = node->right = NULL;
+                return node;
+        }
+
+        if(N->key == key){
+                CompCalls++;
+                N->data_ptr = elem_ptr; //update elem_ptr
+               
+        }
+        else if(N->key < key){
+		CompCalls += 2;
+               N->right =  insertNode_AVL(T,N->right, key, elem_ptr);
+        }
+        else if(N->key > key){
+		CompCalls += 2;
+                N->left = insertNode_AVL(T,N->left, key, elem_ptr);
+        }
+	
+
+        N->height = 1 + max(height(N->left),height(N->right)); //update heights
+	
+	int balance = checkBalance(N);
+
+	    // Right rotation 
+    if (balance > 1 && key < N->left->key){ 
+        NumRotations++;
+	return rightRotate(N);
+    } 
+  
+    // left rotation 
+    if (balance < -1 && key > N->right->key){ 
+        NumRotations++;
+	return leftRotate(N);
+    } 
+  
+    // Left Right rotation 
+    if (balance > 1 && key > N->left->key) 
+    {
+	NumRotations += 2; 
+        N->left =  leftRotate(N->left); 
+        return rightRotate(N); 
+    } 
+  
+    // Right Left rotation 
+    if (balance < -1 && key < N->right->key) 
+    { 
+	NumRotations += 2;
+        N->right = rightRotate(N->right); 
+        return leftRotate(N); 
+    }
+
+return N;
+
+}
+
+
+
+/* Insert data_t into the tree with the associated key. Insertion MUST
+ * follow the tree's property AVL. This function should be called from
+ * bst_insert for AVL tree's inserts.
+ *
+ * T - tree to insert into
+ * key - search key to determine if key is in the tree
+ * elem_ptr - data to be stored at tree node indicated by key
+ *
+ * RETURNS 0 if key is found and element is replaced, and 1 if key is not found
+ * and element is inserted
+ */
+int bst_avl_insert(bst_t *T, bst_key_t key, data_t elem_ptr)
+{
+    int replace = 0;
+    int sizeBefore; //used to check if child has been added
+
+     sizeBefore = T->size;
+     T->root = insertNode_AVL(T,T->root, key, elem_ptr);
+
+                if(T->size != sizeBefore){
+                        replace = 1;          //new child added
+                }
+                else{
+                        replace = 0;
+                }
+
+    return replace;
+}
+
+/* DO NOT NEED TO IMPLEMENT FOR REGULAR ASSIGNMENT. ONLY FOR EXTRA ASSIGNMENT.
+ *
+ * Removes the item in the tree with the matching key.
+ * 
+ * T - pointer to tree
+ * key - search key for particular node in the tree 'T'
+ *
+ * RETURNS the pointer to the data memory block and free the bst_node_t memory
+ * block.  If the key is not found in the tree, return NULL.  If the tree's 
+ * policy is AVL, then ensure all nodes have the AVL property.
+ *
+ */
+
+data_t bst_remove(bst_t *T, bst_key_t key)
+{
+    data_t dp = NULL;
+    CompCalls = 0;
+    NumRotations = 0;
+    if (T->policy == AVL)
+	    dp = NULL; /*TODO: AVL remove */
+    else
+	    dp = NULL; /*TODO: BST remove */
+
+    /*TODO: update tree stats*/
+
+#ifdef VALIDATE
+        bst_debug_validate(T);
+#endif
+    return dp;
+}
+
+
+/* RETURNS the number of keys in the tree */
+int bst_size(bst_t *T)
+{
+    if(T == NULL){
+	return 0;
+    }
+    else{
+	return T->size;
+    }
+}
+
+/* RETURNS the number of key comparisons  */
+int bst_key_comps(bst_t *T)
+{
+    if(T == NULL){
+        return 0;
+    }
+    else{
+        return T->num_recent_key_comparisons; 
+    }
+
+}
+
+/* RETURNS the computed internal path length of the tree T. Uses auxilary recursive function
+getInternal in order to actually compute the value. This function works by adding all paths to each node recursively
+to produce the internal path length */
+int getInternal(bst_node_t *N, int currentLevel){
+	if(N == NULL){
+		return 0;
+        }
+	return currentLevel + getInternal(N->left, currentLevel + 1) + getInternal(N->right, currentLevel + 1);
+}
+int bst_int_path_len(bst_t *T)
+{
+
+    if(T->root == NULL){
+	return 0;
+    }
+    else{
+    	return getInternal(T->root, 0);
+    }
+}
+
+/* RETURNS the number of rotations from the last remove*/
+int bst_rotations(bst_t *T)
+{
+    if(T == NULL){
+        return 0;
+    }
+    else{
+        return T->num_recent_rotations; 
+    }
+
+}
+
+
+/* prints the tree T */
+void bst_debug_print_tree(bst_t *T)
+{
+    ugly_print(T->root, 0, T->policy);//XTRA
+    printf("\n");
+    if (T->size < 64)
+	pretty_print(T);
+}
+
+/* basic print function for a binary tree */
+void ugly_print(bst_node_t *N, int level, int policy)
+{
+    int i;
+    if (N == NULL) return;
+    ugly_print(N->right, level+1, policy);
+    if (policy == AVL) {
+	    for (i = 0; i<level; i++) printf("       ");
+	        printf("%5d-%d\n", N->key, N->height);
+    } else {
+	    for (i = 0; i<level; i++) printf("     ");
+	        printf("%5d\n", N->key);
+    }
+    ugly_print(N->left, level+1, policy);
+}
+
+
+/* Basic validation function for tree T */
+void bst_debug_validate(bst_t *T)
+{
+    int size = 0;
+    assert(bst_debug_validate_rec(T->root, INT_MIN, INT_MAX, &size) == TRUE);
+    assert(size == T->size);
+    if (T->policy == AVL)
+	    rec_height(T->root);
+}
+
+
+/* A tree validation function
+ */
+int bst_debug_validate_rec(bst_node_t *N, int min, int max, int *count)
+{
+    if (N == NULL)
+        return TRUE;
+    if (N->key <= min || N->key >= max)
+        return FALSE;
+    assert(N->data_ptr != NULL);
+    *count += 1;
+    return bst_debug_validate_rec(N->left, min, N->key, count) &&
+        bst_debug_validate_rec(N->right, N->key, max, count);
+}
+
+/* Verifies AVL tree properties */
+
+int rec_height(bst_node_t *N)
+{
+    if (N == NULL)
+	    return 0;
+    int lh = rec_height(N->left);
+    int rh = rec_height(N->right);
+    int lean = lh - rh;
+    assert(lean == 0 || lean == 1 || lean == -1);
+    return 1 + MYMAX(lh, rh); 
+
+}
+
+
+
+
+
+/* Recursive function to count children */
+int children(bst_node_t *N)
+{
+    if (N == NULL) return 0;
+    return 1 + children(N->left) + children(N->right);
+}
+
+
+
+/* Prints the tree to the terminal in ASCII art*/
+void pretty_print(bst_t *T)
+{
+    typedef struct queue_tag {
+	    bst_node_t *N;
+	    int level;
+	    int list_sum;
+    } queue_t;
+
+    queue_t Q[T->size];
+    int q_head = 0;
+    int q_tail = 0;
+    int i, j;
+    int current_level = 0;
+    int col_cnt = 0;
+    bst_node_t *N;
+
+    Q[q_tail].N = T->root;
+    Q[q_tail].level = 0;
+    Q[q_tail].list_sum = 0;
+    q_tail++;
+    for (i = 0; i < T->size; i++)
+    {
+	assert(q_head < T->size);
+	N = Q[q_head].N;
+	if (Q[q_head].level > current_level) {
+	    printf("\n");
+	    current_level++;
+	    col_cnt = 0;
+	}
+	int left_ch = children(N->left);
+	int my_pos = 1 + left_ch + Q[q_head].list_sum;
+	int left_child_pos = my_pos;
+	if (N->left != NULL)
+	    left_child_pos = 1 + Q[q_head].list_sum + children(N->left->left);
+	int right_child_pos = my_pos;
+	if (N->right != NULL)
+	    right_child_pos = my_pos + 1 + children(N->right->left);
+	for (j = col_cnt + 1; j <= right_child_pos; j++)
+	{
+	    if (j == my_pos)
+		if (left_child_pos < my_pos)
+		    if (N->key < 10)
+			printf("--%d", N->key);
+		    else if (N->key < 100)
+			printf("-%d", N->key);
+		    else
+			printf("%d", N->key);
+		else
+		    printf("%3d", N->key);
+	    else if (j == left_child_pos)
+		//printf("  |");
+		printf("  /");
+	    else if (j > left_child_pos && j < my_pos)
+		printf("---");
+	    else if (j > my_pos && j < right_child_pos)
+		printf("---");
+	    else if (j == right_child_pos)
+		//printf("--|");
+		printf("-\\ ");
+	    else
+		printf("   ");
+	}
+	col_cnt = right_child_pos;
+
+	if (N->left != NULL) {
+	    Q[q_tail].N = N->left;
+	    Q[q_tail].level = Q[q_head].level + 1;
+	    Q[q_tail].list_sum = Q[q_head].list_sum;
+	    q_tail++;
+	}
+	if (N->right != NULL) {
+	    Q[q_tail].N = N->right;
+	    Q[q_tail].level = Q[q_head].level + 1;
+	    Q[q_tail].list_sum = Q[q_head].list_sum + left_ch + 1;
+	    q_tail++;
+	}
+	q_head++;
+    }
+    printf("\n");
+}
+
+/* vi:set ts=8 sts=4 sw=4 et: */
